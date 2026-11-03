@@ -1,0 +1,47 @@
+model: costa            # costa | ddm | linear_drag
+params: configs/params.yaml
+splits: configs/splits.yaml
+seeds: [0, 1, 2, 3, 4]
+
+mlp:
+  hidden: [64, 64]
+  activation: silu      # silu | tanh
+optim:
+  lr: 1.0e-3
+  weight_decay: 0.0
+  batch_size: 512
+  max_epochs: 500
+early_stopping:
+  metric: val_rollout_rmse
+  horizon_s: 0.5
+  patience: 20
+
+labels:
+  # Force label uses the merged `acc` column directly (smooth, consistent with vel).
+  # `ang acc` is noisy (most power 10-30 Hz). Its low-pass cutoff is a VALIDATION
+  # choice like the checkpoint (L04 appendix), selected on val rollouts. null = unfiltered.
+  alpha_lowpass_hz_candidates: [null, 40.0, 20.0, 10.0]
+  time_shift_s: 0.0     # motors vs acc: no consistent offset found (apparent lag grows with speed)
+  spike_rule: none      # checked: the 13-43-38 "spike" at 19.13 s is a real 20 ms pitch pulse
+
+data:
+  train_subsample: 4    # use every 4th row for fitting (400 Hz is oversampled); rollouts use all rows
+  sample_weighting_candidates: [none, speed_bin]   # chosen on validation, like the filter
+
+normalization:
+  # mean/std from TRAINING rows only, frozen and reused everywhere (val, test, rollouts).
+  # Channels with std < min_std get the declared physical scale instead (L04).
+  min_std: 1.0e-6
+  scales: {vb: 1.0, w: 1.0, mot: 100.0}   # [m/s], [rad/s], [rad/s]
+
+integrator:
+  # RK4, quaternion renormalized every step, identical for PBM / DDM / CoSTA.
+  # dt = sample period of the piece (0.0025 s; 1/164 s for 2021-02-18-16-43-54).
+  dt: null
+eval:
+  horizons_s: [0.1, 0.25, 0.5, 1.0]
+  window_stride: 10
+  # Report rollout error per bin of the window's START speed ||v|| [m/s], not only
+  # per role: ~75% of test_extrap rows lie inside the training box.
+  speed_bins: [0.0, 10.0, 13.0, .inf]
+  knn_novelty_k: 1      # optional: distance to nearest training sample (normalized inputs)

@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Data (NeuroBEM raw + generated)
+data/raw/*
+data/synthetic/*
+!data/**/.gitkeep
+
+# Per-run outputs
+results/*
+!results/.gitkeep
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Windows/WSL artifacts
+*:Zone.Identifier
+code.tar.xz

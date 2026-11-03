@@ -1,0 +1,10 @@
+params: configs/params.yaml
+out_dir: data/synthetic
+n_flights: 40
+duration_s: 30.0
+dt: 0.002
+max_speeds: [2.0, 4.0, 6.0, 10.0]   # [m/s] spread to allow interp/extrap splits
+drag:
+  linear_diag: [0.3, 0.3, 0.1]      # [N s/m] body frame
+  quadratic_diag: [0.0, 0.0, 0.0]
+seed: 0

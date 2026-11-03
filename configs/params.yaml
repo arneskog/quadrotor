@@ -1,0 +1,25 @@
+# Quadrotor physical parameters (SI units), body frame front-left-up (FLU).
+# Source: NeuroBEM code release (Bauersfeld et al., RSS 2021), code.tar.xz in repo root.
+# Their C++ simulator works internally in front-right-down (FRD); values below are converted
+# to FLU via (x, y, z)_FLU = (x, -y, -z)_FRD.
+mass: 0.752                          # [kg]
+inertia_diag: [0.00254, 0.00214, 0.00436]  # [Jxx, Jyy, Jzz] [kg m^2]
+kf: 1.562522e-06                     # thrust coefficient [N / (rad/s)^2]   (test-stand prior, refit on TRAIN)
+km: 1.908873e-08                     # rotor drag-torque coefficient [N m / (rad/s)^2] (test-stand prior)
+rotor_pos:                           # rotor i = data column "mot i"; 4x[x, y, z] FLU [m]
+  - [-0.078, -0.100, -0.027]         # mot 1: rear-right
+  - [ 0.078, -0.100, -0.027]         # mot 2: front-right
+  - [-0.078,  0.100, -0.027]         # mot 3: rear-left
+  - [ 0.078,  0.100, -0.027]         # mot 4: front-left
+rotor_dir: [1, -1, -1, 1]            # sign of rotor reaction torque about body +z: tau_z = km * sum(dir_i * Omega_i^2)
+motor_inertia: 9.3575e-06            # motor + propeller inertia about spin axis [kg m^2] (for optional dmot yaw term)
+g: 9.81                              # [m/s^2]
+
+sources:
+  mass: "code/simulator/include/params.h, struct Quadcopter_s (mass = 0.752); same in Matlab/TrajectoryGeneration/subroutines/setupKingfisher.m"
+  inertia_diag: "code/simulator/include/params.h, Quadcopter_s Ixx/Iyy/Izz. NOTE setupKingfisher.m differs slightly: [0.00262, 0.00214, 0.0043]"
+  kf: "code/simulator/include/params.h, Propeller_s, MODEL == 0 'Quadratic fit thrust coefficient' cl = 1.562522e-06 (thrust test stand, Matlab/BEM/QuadraticFit.m). LS fit on train flight 2021-02-03-16-47-27 (z > 0.5 m) gives 1.463e-06 (-6%)"
+  km: "code/simulator/include/params.h, Propeller_s, MODEL == 0 'Quadratic fit torque coefficient' cd = 1.908873e-08 (km/kf = 0.0122)"
+  rotor_pos: "code/simulator/include/params.h dx=0.078, dy=0.1, dz=0.027 (FRD) + motor order in code/simulator/src/simulator/quadcopter.cpp (Quadcopter ctor). Matches Betaflight Quad-X numbering (1 RR, 2 FR, 3 RL, 4 FL)"
+  rotor_dir: "quadcopter.cpp: motors 1,4 isCW=true, 2,3 false; propeller.cpp torque_z_FRD = -isCW*Q  ->  +Q about FLU +z for motors 1,4"
+  motor_inertia: "code/simulator/include/params.h, struct Motor_s inertia"

@@ -1,0 +1,25 @@
+[project]
+name = "quadrotor"
+version = "0.1.0"
+description = "Physics-based quadrotor model with CoSTA neural correction (NeuroBEM)"
+readme = "README.md"
+authors = [
+    { name = "arneskog", email = "arneskog@stud.ntnu.no" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0.3",
+    "scipy>=1.18.1",
+    "torch>=2.14.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
