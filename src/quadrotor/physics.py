@@ -8,7 +8,7 @@ Input u = motor speeds Omega (4,) [rad/s].
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
@@ -26,6 +26,7 @@ def load_params(path: str | Path) -> QuadParams:
         rotor_pos=np.asarray(cfg["rotor_pos"], dtype=float),
         rotor_dir=np.asarray(cfg["rotor_dir"], dtype=float),
         g=cfg["g"],
+        torque_gain=np.asarray(cfg.get("torque_gain", [1.0, 1.0, 1.0]), dtype=float),
     )
 
 @dataclass(frozen=True)
@@ -38,24 +39,37 @@ class QuadParams:
     km: float  # drag-torque coefficient [N m / (rad/s)^2]
     rotor_pos: Array  # (4, 3) rotor positions in body frame [m]
     rotor_dir: Array  # (4,) sign of rotor reaction torque about body +z, +1 / -1
-    g: float = 9.81
+    g: float = 9.81  # [m/s^2]
+    # Effective per-axis scaling of the motor torque [-] (1 = ideal rotor model). The measured
+    # motor-speed differences explain little of the measured body torque, so this is fitted
+    # on TRAIN flights (train.fit_torque_gain); thrust keeps kf.
+    torque_gain: Array = field(default_factory=lambda: np.ones(3))
 
 
 def quat_to_rotmat(q: Array) -> Array:
-    """Rotation matrix R (body -> world) from unit quaternion [w, x, y, z]."""
-    w, x, y, z = q
-    return np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)],
-        [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)],
-        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)],
-    ])
+    """Rotation matrix R (body -> world) from unit quaternion [w, x, y, z]; (..., 4) -> (..., 3, 3)."""
+    w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    return np.stack([
+        np.stack([1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)], axis=-1),
+        np.stack([2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)], axis=-1),
+        np.stack([2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)], axis=-1),
+    ], axis=-2)
 
 
 def quat_mul(q1: Array, q2: Array) -> Array:
-    """Hamilton product q1 ⊗ q2."""
-    s1, v1 = q1[0], q1[1:]
-    s2, v2 = q2[0], q2[1:]
-    return np.concatenate(([s1*s2 - v1 @ v2], s1*v2 + s2*v1 + np.cross(v1, v2)))
+    """Hamilton product q1 ⊗ q2; (..., 4) x (..., 4) -> (..., 4)."""
+    s1, v1 = q1[..., :1], q1[..., 1:]
+    s2, v2 = q2[..., :1], q2[..., 1:]
+    scalar = s1*s2 - np.sum(v1*v2, axis=-1, keepdims=True)
+    return np.concatenate((scalar, s1*v2 + s2*v1 + np.cross(v1, v2)), axis=-1)
+
+
+def body_velocity(x: Array) -> Array:
+    """Body-frame velocity R(q)^T v [m/s] from state(s) x; (..., 13) -> (..., 3)."""
+    q = x[..., 6:10]
+    v = x[..., 3:6]
+
+    return np.einsum("...ji,...j->...i", quat_to_rotmat(q), v)  # R^T v per batch element
 
 
 def motor_wrench(omega: Array, p: QuadParams) -> tuple[Array, Array]:
@@ -67,8 +81,28 @@ def motor_wrench(omega: Array, p: QuadParams) -> tuple[Array, Array]:
         thrust @ p.rotor_pos[:, 1],                           #  Σ y_i T_i
         -(thrust @ p.rotor_pos[:, 0]),                        # −Σ x_i T_i
         p.km * (omega**2 @ p.rotor_dir),                      #  km Σ dir_i Ω_i²
-    ], axis=-1)
+    ], axis=-1) * p.torque_gain                               # train-fitted effective gain per axis
     return force, torque
+
+
+def rigid_body(x: Array, force_b: Array, torque_b: Array, p: QuadParams) -> Array:
+    """State derivative xdot (..., 13) from a body-frame wrench: force [N] (..., 3), torque [N m] (..., 3).
+
+    Newton in the world frame, Euler in the body frame, quaternion kinematics.
+    Shared by every model; they differ only in the wrench they supply.
+    A leading batch dimension (many rollout windows at once) must be supported.
+    """
+    v = x[..., 3:6]
+    q = x[..., 6:10]
+    w = x[..., 10:13]
+    pos_dot = v
+    v_dot = np.einsum("...ij,...j->...i", quat_to_rotmat(q), force_b) / p.mass - np.array([0.0, 0.0, p.g])
+    q_dot = 0.5*quat_mul(q, np.concatenate((np.zeros_like(w[..., :1]), w), axis=-1))
+    gyro = np.cross(w, w @ p.inertia.T)                    # w x (J w), row-wise
+    w_dot = np.linalg.solve(p.inertia, (torque_b - gyro)[..., None])[..., 0]
+
+    return np.concatenate((pos_dot, v_dot, q_dot, w_dot), axis=-1)
+
 
 def f_pbm(
     x: Array,
@@ -84,20 +118,11 @@ def f_pbm(
 
     Costa corrects the wrence, not state derivatives -> Correction goes in before Newton-Euler
     """
-    v = x[3:6]
-    q = x[6:10]
-    w = x[10:13]
-
-    force_b, torgue_b = motor_wrench(u, q)
+    force_b, torgue_b = motor_wrench(u, p)
     if f_corr is not None:
         force_b = force_b + f_corr
     if t_corr is not None:
         torgue_b = torgue_b + t_corr
 
-    pos_dot = v
-    v_dot = quat_to_rotmat(q) @ force_b / p.mass - np.array([0.0, 0.0, p.g])
-    q_dot = 0.5*quat_mul(q, np.concatenate(([0.0], w)))
-    w_dot = np.linalg.solve(p.inertia, torgue_b - np.cross(w, p.inertia @ w))
-
-    return np.concatenate((pos_dot, v_dot, q_dot, w_dot))
+    return rigid_body(x, force_b, torgue_b, p) 
 

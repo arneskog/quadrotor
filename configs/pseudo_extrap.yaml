@@ -1,0 +1,51 @@
+# Pseudo-extrapolation experiment on DEVELOPMENT flights only (train + val of splits.yaml,
+# variant b). No test_* flight is used. Declared before any result was seen (2026-11-03).
+#
+# Question: does CoSTA degrade less than the DDM when states leave the training range?
+# Fit on slow flights, select checkpoints on slow validation flights, then score on held-out
+# slow flights (interp), faster flights (near) and the fastest dev flights (extrap).
+
+base_config: configs/train.yaml
+seeds: [0, 1, 2]
+models: [pbm, linear_drag, costa, costa_force, ddm]
+# v2 (2026-11-03): + PBM torque gain fitted on the fit flights (pbm_fit.torque_gain), + costa_force.
+# The split above is unchanged from v1.
+eval_stride: 20            # rows between window starts (batched rollouts)
+
+roles:
+  fit:                     # max speed <= 7.2 m/s; maneuver families spline, vertical, figure8, ellipse, circle
+    - "2021-02-03-16-47-27"  #  1.99 m/s spline
+    - "2021-02-05-14-19-34"  #  2.65 m/s vertical
+    - "2021-02-23-10-43-02"  #  3.45 m/s figure8
+    - "2021-02-03-13-43-38"  #  3.82 m/s spline
+    - "2021-02-05-14-24-35"  #  4.01 m/s vertical
+    - "2021-02-23-11-41-38"  #  6.80 m/s ellipse_sweep
+    - "2021-02-03-16-58-13"  #  7.18 m/s circle
+  pseudo_val:              # checkpoint selection only (inside the fit speed range)
+    - "2021-02-23-10-48-03"  #  3.46 m/s figure8
+    - "2021-02-23-11-31-23"  #  7.33 m/s spline
+  pseudo_interp:           # held out, inside the fit speed range; no decision uses it
+    - "2021-02-03-13-44-49"  #  6.22 m/s spline
+    - "2021-02-05-15-58-59"  #  6.56 m/s figure8
+  pseudo_near:             # 8.7 - 9.8 m/s (gap 7.3 -> 8.7 m/s to the fit range)
+    - "2021-02-05-15-04-42"
+    - "2021-02-03-13-53-04"
+    - "2021-02-23-22-26-25"
+    - "2021-02-23-17-45-47"
+    - "2021-02-03-17-04-15"
+    - "2021-02-05-16-06-45"
+    - "2021-02-23-19-04-50"
+    - "2021-02-18-17-44-17"
+    - "2021-02-23-10-50-42"
+    - "2021-02-18-17-05-14"
+    - "2021-02-18-17-42-11"
+    - "2021-02-23-10-52-00"
+  pseudo_extrap:           # 11.1 - 12.3 m/s (the variant-b additions to train)
+    - "2021-02-18-17-47-42"
+    - "2021-02-18-17-19-08"
+    - "2021-02-18-17-12-03"
+    - "2021-02-23-22-03-52"
+    - "2021-02-18-18-08-45"
+    - "2021-02-03-16-10-37"
+    - "2021-02-18-16-41-41"
+    - "2021-02-05-16-10-53"

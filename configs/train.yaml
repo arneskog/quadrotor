@@ -1,7 +1,13 @@
-model: costa            # costa | ddm | linear_drag
+model: costa            # pbm | linear_drag | costa | costa_force | ddm | ddm_kin
 params: configs/params.yaml
 splits: configs/splits.yaml
+split_variant: b        # fixed (see splits.yaml); null = base split
 seeds: [0, 1, 2, 3, 4]
+
+pbm_fit:
+  # PBM parameters refitted on TRAIN flights only (least squares); others keep params.yaml priors.
+  kf: true
+  torque_gain: true     # per-axis motor-torque gain (train.fit_torque_gain); see the torque diagnosis
 
 mlp:
   hidden: [64, 64]
@@ -12,27 +18,34 @@ optim:
   batch_size: 512
   max_epochs: 500
 early_stopping:
-  metric: val_rollout_rmse
+  metric: val_rollout_rmse   # mean position RMSE [m] along validation windows (evaluate.validation_score)
   horizon_s: 0.5
-  patience: 20
+  window_stride_s: 1.0       # spacing of validation window starts [s] (cost vs. coverage)
+  val_every_epochs: 5
+  patience: 20               # [validations]
+  min_rel_improvement: 0.01
 
 labels:
   # Force label uses the merged `acc` column directly (smooth, consistent with vel).
   # `ang acc` is noisy (most power 10-30 Hz). Its low-pass cutoff is a VALIDATION
   # choice like the checkpoint (L04 appendix), selected on val rollouts. null = unfiltered.
+  # Applied to the NETWORK training labels only; the PBM fit and every reported metric use
+  # unfiltered alpha (scripts/run.py), so all models and cutoffs are scored identically.
   alpha_lowpass_hz_candidates: [null, 40.0, 20.0, 10.0]
+  alpha_lowpass_hz: 10.0   # ONE cutoff for every network model, selected 2026-11-05 on validation flights
+                           # (results/alpha_selection.md, scripts/select_alpha.py); fixed for the final runs
   time_shift_s: 0.0     # motors vs acc: no consistent offset found (apparent lag grows with speed)
   spike_rule: none      # checked: the 13-43-38 "spike" at 19.13 s is a real 20 ms pitch pulse
 
 data:
   train_subsample: 4    # use every 4th row for fitting (400 Hz is oversampled); rollouts use all rows
-  sample_weighting_candidates: [none, speed_bin]   # chosen on validation, like the filter
+  sample_weighting: none   # declared 2026-11-04: every training row weighs the same (not tuned)
 
 normalization:
   # mean/std from TRAINING rows only, frozen and reused everywhere (val, test, rollouts).
   # Channels with std < min_std get the declared physical scale instead (L04).
   min_std: 1.0e-6
-  scales: {vb: 1.0, w: 1.0, mot: 100.0}   # [m/s], [rad/s], [rad/s]
+  scales: {vb: 1.0, w: 1.0, mot: 100.0, gb: 1.0}   # [m/s], [rad/s], [rad/s], [-] (gb: ddm_kin only)
 
 integrator:
   # RK4, quaternion renormalized every step, identical for PBM / DDM / CoSTA.
@@ -44,4 +57,8 @@ eval:
   # Report rollout error per bin of the window's START speed ||v|| [m/s], not only
   # per role: ~75% of test_extrap rows lie inside the training box.
   speed_bins: [0.0, 10.0, 13.0, .inf]
-  knn_novelty_k: 1      # optional: distance to nearest training sample (normalized inputs)
+  # Saved for figures in errors_<tag>.npz (scripts/run.py evaluate_role): error-quantile curves on a
+  # time grid along the windows, and full example trajectories every traj_every_s of every piece.
+  curve_dt_s: 0.01
+  curve_quantiles: [0.1, 0.25, 0.5, 0.75, 0.9]
+  traj_every_s: 2.0

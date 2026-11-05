@@ -1,0 +1,30 @@
+# Data-efficiency experiment on DEVELOPMENT flights only (no test_* flight).
+# Declared before any result was seen (2026-11-03).
+#
+# Question: does CoSTA need less training data than the DDM? (L02: "physics as the ultimate
+# regulariser"; L04: the hybrid only has to learn the discrepancy.)
+# Every model is fitted on the first n flights of `fit_order`; the PBM parameters (kf, torque
+# gain) are refitted on the same n flights. Checkpoints are selected on pseudo_val, and all
+# models are scored on the same held-out roles as configs/pseudo_extrap.yaml.
+
+base_config: configs/train.yaml
+roles_from: configs/pseudo_extrap.yaml   # pseudo_val / pseudo_interp / pseudo_near / pseudo_extrap
+seeds: [0, 1, 2]
+models: [pbm, linear_drag, costa, ddm]
+eval_stride: 20
+eval_roles: [pseudo_interp, pseudo_near, pseudo_extrap]
+
+fit_sizes: [1, 2, 4, 7]
+fit_order:                 # nested subsets: each size adds a new maneuver type
+  - "2021-02-03-13-43-38"  #  3.82 m/s spline
+  - "2021-02-23-11-41-38"  #  6.80 m/s ellipse_sweep
+  - "2021-02-03-16-58-13"  #  7.18 m/s circle
+  - "2021-02-23-10-43-02"  #  3.45 m/s figure8
+  - "2021-02-05-14-19-34"  #  2.65 m/s vertical
+  - "2021-02-03-16-47-27"  #  1.99 m/s spline
+  - "2021-02-05-14-24-35"  #  4.01 m/s vertical
+
+# Equal optimisation budget across sizes: validation interval and epoch limit from train.yaml are
+# for the full 7-flight set and are multiplied by (rows_full / rows_n), so every size gets about
+# the same number of optimizer steps between validations and in total.
+scale_epochs_to_steps: true

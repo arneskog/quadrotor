@@ -20,6 +20,7 @@ runs along time (rollouts, finite differences, filters).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -115,6 +116,59 @@ def flight_pieces(
 ) -> list[pd.DataFrame]:
     """Continuous pieces of all segments of one flight (never spanning segments)."""
     return [p for s in segments for p in continuous_pieces(s, min_height, dt)]
+
+STATE_COLS: list[str] = [
+    "p_x", "p_y", "p_z",          # x[0:3]   position, world [m]
+    "v_x", "v_y", "v_z",          # x[3:6]   velocity, WORLD frame [m/s] (not vb_*)
+    "q_w", "q_x", "q_y", "q_z",   # x[6:10]  quaternion [w, x, y, z]: q_w FIRST
+    "w_x", "w_y", "w_z",          # x[10:13] body rates [rad/s]
+]
+MOTOR_COLS: list[str] = [f"mot_{i}" for i in range(1, 5)]   # mot_1 .. mot_4 [rad/s]
+
+
+def states_inputs(piece: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Model state x (N, 13) = [p, v_world, q (w, x, y, z), w_body] and motor speeds u (N, 4).
+
+    The CSV quaternion is (x, y, z, w); it is reordered here and renormalized to unit length.
+    """
+    x = piece[STATE_COLS].to_numpy(dtype=np.float64, copy=True)
+    x[:, 6:10] /= np.linalg.norm(x[:, 6:10], axis=1, keepdims=True)
+    u = piece[MOTOR_COLS].to_numpy(dtype=np.float64, copy=True)
+    return x, u
+
+def measurements(piece: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Measured body specific force acc [m/s^2] (N, 3) and angular acceleration alpha [rad/s^2] (N, 3)."""
+    acc = piece[["acc_x", "acc_y", "acc_z"]].to_numpy(dtype=np.float64)
+    alpha = piece[["alpha_x", "alpha_y", "alpha_z"]].to_numpy(dtype=np.float64)
+    return acc, alpha
+
+
+@dataclass(frozen=True)
+class Piece:
+    """One continuous, gap-free piece of one flight, as model-ready arrays (SI units)."""
+
+    flight: str
+    x: np.ndarray  # (N, 13) state
+    u: np.ndarray  # (N, 4) motor speeds [rad/s]
+    acc: np.ndarray  # (N, 3) body specific force [m/s^2]
+    alpha: np.ndarray  # (N, 3) body angular acceleration [rad/s^2]
+    dt: float  # [s] sample period of the segment it came from
+
+
+def role_pieces(
+    raw_dir: Path, flights: list[str], min_height: float, min_rows: int = 2
+) -> list[Piece]:
+    """All continuous pieces with at least min_rows rows of the given flights, as Pieces."""
+    out = []
+    for fl in flights:
+        for seg in load_flight(raw_dir, fl):
+            dt = sample_period(seg)                       # BEFORE dropping rows (see below)
+            for pc in continuous_pieces(seg, min_height, dt):
+                if len(pc) >= min_rows:
+                    x, u = states_inputs(pc)
+                    acc, alpha = measurements(pc)
+                    out.append(Piece(fl, x, u, acc, alpha, dt))
+    return out
 
 
 def window_starts(n_rows: int, horizon_steps: int, stride: int = 1) -> np.ndarray:

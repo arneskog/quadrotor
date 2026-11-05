@@ -20,3 +20,7 @@ results/*
 # Windows/WSL artifacts
 *:Zone.Identifier
 code.tar.xz
+course/
+TTK29-2026/
+CLAUDE.local.md
+reference_impl/
